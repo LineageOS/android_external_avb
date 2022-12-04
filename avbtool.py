@@ -347,11 +347,12 @@ class RSAPublicKey(object):
 
   MODULUS_PREFIX = b'modulus='
 
-  def __init__(self, key_path):
+  def __init__(self, key_path, key_password=None):
     """Loads and parses an RSA key from either a private or public key file.
 
     Arguments:
       key_path: The path to a key file.
+      key_password: The password to a key file.
 
     Raises:
       AvbError: If RSA key parameters could not be read from file.
@@ -367,6 +368,8 @@ class RSAPublicKey(object):
     # instead just parse openssl(1) output to get this
     # information. It's ugly but...
     args = ['openssl', 'rsa', '-in', key_path, '-modulus', '-noout']
+    if key_password:
+      args += ['--passin', 'pass:' + key_password]
     p = subprocess.Popen(args,
                          stdin=subprocess.PIPE,
                          stdout=subprocess.PIPE,
@@ -392,6 +395,7 @@ class RSAPublicKey(object):
     # bits can be derived from the modulus by rounding up to the
     # nearest power of 2.
     self.key_path = key_path
+    self.key_password = key_password
     self.modulus = int(modulus_hexstr, 16)
     self.num_bits = round_to_pow2(int(math.ceil(math.log(self.modulus, 2))))
     self.exponent = 65537
@@ -480,8 +484,11 @@ class RSAPublicKey(object):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE)
       else:
+        args = ['openssl', 'rsautl', '-sign', '-inkey', self.key_path, '-raw']
+        if self.key_password:
+          args += ['--passin', 'pass:' + self.key_password]
         p = subprocess.Popen(
-            ['openssl', 'rsautl', '-sign', '-inkey', self.key_path, '-raw'],
+            args,
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE)
@@ -2487,14 +2494,16 @@ class Avb(object):
       o.write('    Product Signing Key:\n')
       print_atx_certificate(psk)
 
-  def verify_image(self, image_filename, key_path, expected_chain_partitions,
-                   follow_chain_partitions, accept_zeroed_hashtree):
+  def verify_image(self, image_filename, key_path, key_password,
+                   expected_chain_partitions, follow_chain_partitions,
+                   accept_zeroed_hashtree):
     """Implements the 'verify_image' command.
 
     Arguments:
       image_filename: Image file to get information from (file object).
       key_path: None or check that embedded public key matches key at given
           path.
+      key_password: None or password to private key.
       expected_chain_partitions: List of chain partitions to check or None.
       follow_chain_partitions:
           If True, will follows chain partitions even when not specified with
@@ -2526,7 +2535,7 @@ class Avb(object):
     if key_path:
       print('Verifying image {} using key at {}'.format(image_filename,
                                                         key_path))
-      key_blob = RSAPublicKey(key_path).encode()
+      key_blob = RSAPublicKey(key_path, key_password).encode()
     else:
       print('Verifying image {} using embedded public key'.format(
           image_filename))
@@ -2585,8 +2594,8 @@ class Avb(object):
         print('--')
         chained_image_filename = os.path.join(image_dir,
                                               desc.partition_name + image_ext)
-        self.verify_image(chained_image_filename, key_path, None, False,
-                          accept_zeroed_hashtree)
+        self.verify_image(chained_image_filename, key_path, key_password, None,
+                          False, accept_zeroed_hashtree)
 
   def print_partition_digests(self, image_filename, output, as_json):
     """Implements the 'print_partition_digests' command.
@@ -2905,8 +2914,8 @@ class Avb(object):
     return self._get_cmdline_descriptors_for_hashtree_descriptor(ht)
 
   def make_vbmeta_image(self, output, chain_partitions, algorithm_name,
-                        key_path, public_key_metadata_path, rollback_index,
-                        flags, rollback_index_location,
+                        key_path, key_password, public_key_metadata_path,
+                        rollback_index, flags, rollback_index_location,
                         props, props_from_file, kernel_cmdlines,
                         setup_rootfs_from_kernel,
                         include_descriptors_from_image,
@@ -2923,6 +2932,7 @@ class Avb(object):
       chain_partitions: List of partitions to chain or None.
       algorithm_name: Name of algorithm to use.
       key_path: Path to key to use or None.
+      key_password: Password for key or None.
       public_key_metadata_path: Path to public key metadata or None.
       rollback_index: The rollback index to use.
       flags: Flags value to use in the image.
@@ -2965,9 +2975,9 @@ class Avb(object):
     descriptors = []
     ht_desc_to_setup = None
     vbmeta_blob = self._generate_vbmeta_blob(
-        algorithm_name, key_path, public_key_metadata_path, descriptors,
-        chain_partitions, rollback_index, flags, rollback_index_location,
-        props, props_from_file,
+        algorithm_name, key_path, key_password, public_key_metadata_path,
+        descriptors, chain_partitions, rollback_index, flags,
+        rollback_index_location, props, props_from_file,
         kernel_cmdlines, setup_rootfs_from_kernel, ht_desc_to_setup,
         include_descriptors_from_image, signing_helper,
         signing_helper_with_files, release_string,
@@ -2982,7 +2992,7 @@ class Avb(object):
       padding_needed = padded_size - len(vbmeta_blob)
       output.write(b'\0' * padding_needed)
 
-  def _generate_vbmeta_blob(self, algorithm_name, key_path,
+  def _generate_vbmeta_blob(self, algorithm_name, key_path, key_password,
                             public_key_metadata_path, descriptors,
                             chain_partitions,
                             rollback_index, flags, rollback_index_location,
@@ -3007,6 +3017,7 @@ class Avb(object):
     Arguments:
       algorithm_name: The algorithm name as per the ALGORITHMS dict.
       key_path: The path to the .pem file used to sign the blob.
+      key_password: The password to the .pem file used to sign the blob.
       public_key_metadata_path: Path to public key metadata or None.
       descriptors: A list of descriptors to insert or None.
       chain_partitions: List of partitions to chain or None.
@@ -3160,7 +3171,7 @@ class Avb(object):
       if not key_path:
         raise AvbError('Key is required for algorithm {}'.format(
             algorithm_name))
-      encoded_key = RSAPublicKey(key_path).encode()
+      encoded_key = RSAPublicKey(key_path, key_password).encode()
       if len(encoded_key) != alg.public_key_num_bytes:
         raise AvbError('Key is wrong size for algorithm {}'.format(
             algorithm_name))
@@ -3221,7 +3232,7 @@ class Avb(object):
       binary_hash = ha.digest()
 
       # Calculate the signature.
-      rsa_key = RSAPublicKey(key_path)
+      rsa_key = RSAPublicKey(key_path, key_password)
       data_to_sign = header_data_blob + bytes(aux_data_blob)
       binary_signature = rsa_key.sign(algorithm_name, data_to_sign,
                                       signing_helper, signing_helper_with_files)
@@ -3235,7 +3246,7 @@ class Avb(object):
 
     return header_data_blob + bytes(auth_data_blob) + bytes(aux_data_blob)
 
-  def extract_public_key(self, key_path, output):
+  def extract_public_key(self, key_path, key_password, output):
     """Implements the 'extract_public_key' command.
 
     Arguments:
@@ -3245,7 +3256,7 @@ class Avb(object):
     Raises:
       AvbError: If the public key could not be extracted.
     """
-    output.write(RSAPublicKey(key_path).encode())
+    output.write(RSAPublicKey(key_path, key_password).encode())
 
   def append_vbmeta_image(self, image_filename, vbmeta_image_filename,
                           partition_size):
@@ -3332,7 +3343,7 @@ class Avb(object):
   def add_hash_footer(self, image_filename, partition_size,
                       dynamic_partition_size, partition_name,
                       hash_algorithm, salt, chain_partitions, algorithm_name,
-                      key_path,
+                      key_path, key_password,
                       public_key_metadata_path, rollback_index, flags,
                       rollback_index_location, props,
                       props_from_file, kernel_cmdlines,
@@ -3355,6 +3366,7 @@ class Avb(object):
       chain_partitions: List of partitions to chain.
       algorithm_name: Name of algorithm to use.
       key_path: Path to key to use or None.
+      key_password: Password to key or None.
       public_key_metadata_path: Path to public key metadata or None.
       rollback_index: Rollback index.
       flags: Flags value to use in the image.
@@ -3488,9 +3500,9 @@ class Avb(object):
       # Generate the VBMeta footer.
       ht_desc_to_setup = None
       vbmeta_blob = self._generate_vbmeta_blob(
-          algorithm_name, key_path, public_key_metadata_path, [h_desc],
-          chain_partitions, rollback_index, flags, rollback_index_location,
-          props, props_from_file,
+          algorithm_name, key_path, key_password, public_key_metadata_path,
+          [h_desc], chain_partitions, rollback_index, flags,
+          rollback_index_location, props, props_from_file,
           kernel_cmdlines, setup_rootfs_from_kernel, ht_desc_to_setup,
           include_descriptors_from_image, signing_helper,
           signing_helper_with_files, release_string,
@@ -3547,7 +3559,7 @@ class Avb(object):
   def add_hashtree_footer(self, image_filename, partition_size, partition_name,
                           generate_fec, fec_num_roots, hash_algorithm,
                           block_size, salt, chain_partitions, algorithm_name,
-                          key_path,
+                          key_path, key_password,
                           public_key_metadata_path, rollback_index, flags,
                           rollback_index_location,
                           props, props_from_file, kernel_cmdlines,
@@ -3578,6 +3590,7 @@ class Avb(object):
       chain_partitions: List of partitions to chain.
       algorithm_name: Name of algorithm to use.
       key_path: Path to key to use or None.
+      key_password: Password to key or None.
       public_key_metadata_path: Path to public key metadata or None.
       rollback_index: Rollback index.
       flags: Flags value to use in the image.
@@ -3780,9 +3793,9 @@ class Avb(object):
       # Generate the VBMeta footer and add padding as needed.
       vbmeta_offset = tree_offset + len_hashtree_and_fec
       vbmeta_blob = self._generate_vbmeta_blob(
-          algorithm_name, key_path, public_key_metadata_path, [ht_desc],
-          chain_partitions, rollback_index, flags, rollback_index_location,
-          props, props_from_file,
+          algorithm_name, key_path, key_password, public_key_metadata_path,
+          [ht_desc], chain_partitions, rollback_index, flags,
+          rollback_index_location, props, props_from_file,
           kernel_cmdlines, setup_rootfs_from_kernel, ht_desc_to_setup,
           include_descriptors_from_image, signing_helper,
           signing_helper_with_files, release_string,
@@ -4177,6 +4190,10 @@ class AvbTool(object):
                             help='Path to RSA private key file',
                             metavar='KEY',
                             required=False)
+    sub_parser.add_argument('--key_password',
+                            help='Password for RSA private key file',
+                            metavar='STR',
+                            required=False)
     sub_parser.add_argument('--signing_helper',
                             help='Path to helper used for signing',
                             metavar='APP',
@@ -4316,6 +4333,9 @@ class AvbTool(object):
     sub_parser.add_argument('--key',
                             help='Path to RSA private key file',
                             required=True)
+    sub_parser.add_argument('--key_password',
+                            help='Password for RSA private key file',
+                            required=False)
     sub_parser.add_argument('--output',
                             help='Output file name',
                             type=argparse.FileType('wb'),
@@ -4532,6 +4552,10 @@ class AvbTool(object):
                             help='Check embedded public key matches KEY',
                             metavar='KEY',
                             required=False)
+    sub_parser.add_argument('--key_password',
+                            help='Password for RSA private key file',
+                            metavar='STR',
+                            required=False)
     sub_parser.add_argument('--expected_chain_partition',
                             help='Expected chain partition',
                             metavar='PART_NAME:ROLLBACK_SLOT:KEY_PATH',
@@ -4747,13 +4771,13 @@ class AvbTool(object):
 
   def extract_public_key(self, args):
     """Implements the 'extract_public_key' sub-command."""
-    self.avb.extract_public_key(args.key, args.output)
+    self.avb.extract_public_key(args.key, args.key_password, args.output)
 
   def make_vbmeta_image(self, args):
     """Implements the 'make_vbmeta_image' sub-command."""
     args = self._fixup_common_args(args)
     self.avb.make_vbmeta_image(args.output, args.chain_partition,
-                               args.algorithm, args.key,
+                               args.algorithm, args.key, args.key_password,
                                args.public_key_metadata, args.rollback_index,
                                args.flags, args.rollback_index_location,
                                args.prop, args.prop_from_file,
@@ -4779,7 +4803,7 @@ class AvbTool(object):
                              args.partition_size, args.dynamic_partition_size,
                              args.partition_name, args.hash_algorithm,
                              args.salt, args.chain_partition, args.algorithm,
-                             args.key,
+                             args.key, args.key_password,
                              args.public_key_metadata, args.rollback_index,
                              args.flags, args.rollback_index_location,
                              args.prop, args.prop_from_file,
@@ -4813,7 +4837,7 @@ class AvbTool(object):
         not args.do_not_generate_fec, args.fec_num_roots,
         args.hash_algorithm, args.block_size,
         args.salt, args.chain_partition, args.algorithm,
-        args.key, args.public_key_metadata,
+        args.key, args.key_password, args.public_key_metadata,
         args.rollback_index, args.flags,
         args.rollback_index_location, args.prop,
         args.prop_from_file,
@@ -4861,7 +4885,7 @@ class AvbTool(object):
 
   def verify_image(self, args):
     """Implements the 'verify_image' sub-command."""
-    self.avb.verify_image(args.image.name, args.key,
+    self.avb.verify_image(args.image.name, args.key, args.key_password,
                           args.expected_chain_partition,
                           args.follow_chain_partitions,
                           args.accept_zeroed_hashtree)
