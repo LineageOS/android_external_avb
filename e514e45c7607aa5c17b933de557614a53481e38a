@@ -1,0 +1,21 @@
+{
+  "comments": [
+    {
+      "unresolved": false,
+      "key": {
+        "uuid": "11dd3bad_34d7a802",
+        "filename": "/PATCHSET_LEVEL",
+        "patchSetId": 1
+      },
+      "lineNbr": 0,
+      "author": {
+        "id": 2195
+      },
+      "writtenOn": "2022-12-06T11:02:21Z",
+      "side": 1,
+      "message": "What if we directly called `ANDROID_SECURE_STORAGE_CMD` from here.\n\nThat way we avoid passing password via cli which would be visible in logs.",
+      "revId": "e514e45c7607aa5c17b933de557614a53481e38a",
+      "serverId": "1ec6b3db-b2c1-4fa4-84a2-4c7efe89ba71"
+    }
+  ]
+}
