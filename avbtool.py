@@ -31,6 +31,7 @@ import hashlib
 import json
 import math
 import os
+import signal
 import struct
 import subprocess
 import sys
@@ -4105,7 +4106,7 @@ def calc_fec_data_size(image_size, num_roots):
   return int(pout)
 
 
-def generate_fec_data(image_filename, num_roots):
+def generate_fec_data(image_filename, num_roots, attempt=1):
   """Generate FEC codes for an image.
 
   Arguments:
@@ -4125,6 +4126,8 @@ def generate_fec_data(image_filename, num_roots):
            fec_tmpfile.name],
           stderr=open(os.devnull, 'wb'))
     except subprocess.CalledProcessError as e:
+      if attempt < 3 and e.returncode == -signal.SIGKILL:
+        return generate_fec_data(image_filename, num_roots, attempt + 1)
       raise ValueError('Execution of \'fec\' tool failed: {}.'
                        .format(e)) from e
     fec_data = fec_tmpfile.read()
