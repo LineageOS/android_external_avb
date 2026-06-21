@@ -387,7 +387,6 @@ class RSAPublicKey(object):
     modulus: The key modulus.
     num_bits: The key size.
     key_path: The path to a key file.
-    key_password: The password to a key file or unset.
     delete_key: Whether to delete the key file when exiting the context.
   """
   # The exponent is assumed to always be 65537 and the number of
@@ -427,16 +426,6 @@ class RSAPublicKey(object):
     Raises:
       AvbError: If RSA key parameters could not be read from file.
     """
-    # Read key password from ANDROID_SECURE_STORAGE_CMD
-    if secure_storage_cmd := os.getenv('ANDROID_SECURE_STORAGE_CMD', None):
-      os.environ['TMP__KEY_FILE_NAME'] = str(key_path)
-      p = subprocess.Popen(secure_storage_cmd, shell=True, stdout=subprocess.PIPE)
-      pout, _ = p.communicate()
-      if p.returncode == 0:
-        self.key_password = pout.decode('utf-8')
-      else:
-        print('Failed to get password for key', key_path)
-
     # We used to have something as simple as this:
     #
     #  key = Crypto.PublicKey.RSA.importKey(open(key_path).read())
@@ -448,8 +437,6 @@ class RSAPublicKey(object):
     # instead just parse openssl(1) output to get this
     # information. It's ugly but...
     args = [AVB_OPENSSL, 'rsa', '-in', key_path, '-modulus', '-noout']
-    if key_password := getattr(self, 'key_password', None):
-      args += ['--passin', 'pass:' + key_password]
     p = subprocess.Popen(args,
                          stdin=subprocess.PIPE,
                          stdout=subprocess.PIPE,
@@ -605,11 +592,8 @@ class RSAPublicKey(object):
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE)
       else:
-        args = [AVB_OPENSSL, 'rsautl', '-sign', '-inkey', self.key_path, '-raw']
-        if key_password := getattr(self, 'key_password', None):
-          args += ['--passin', 'pass:' + key_password]
         p = subprocess.Popen(
-            args,
+            [AVB_OPENSSL, 'rsautl', '-sign', '-inkey', self.key_path, '-raw'],
             stdin=subprocess.PIPE,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE)
