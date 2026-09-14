@@ -420,26 +420,16 @@ class RSAPublicKey(object):
     if self.delete_key:
       os.remove(self.key_path)
 
-  def load(key_path):
+  def load(key_path, key_password=None):
     """Loads and parses an RSA key from either a private or public key file.
 
     Arguments:
       key_path: The path to a key file.
+      key_password: The password to a key file or unset.
 
     Raises:
       AvbError: If RSA key parameters could not be read from file.
     """
-    key_password = None
-    # Read key password from ANDROID_SECURE_STORAGE_CMD
-    if secure_storage_cmd := os.getenv('ANDROID_SECURE_STORAGE_CMD', None):
-      os.environ['TMP__KEY_FILE_NAME'] = str(key_path)
-      p = subprocess.Popen(secure_storage_cmd, shell=True, stdout=subprocess.PIPE)
-      pout, _ = p.communicate()
-      if p.returncode == 0:
-        key_password = pout.decode('utf-8')
-      else:
-        print('Failed to get password for key', key_path)
-
     # We used to have something as simple as this:
     #
     #  key = Crypto.PublicKey.RSA.importKey(open(key_path).read())
@@ -942,19 +932,32 @@ def load_public_key(key_path):
     Exception: If the key could not be loaded from the file.
   """
 
+  key_password = None
+  # Read key password from ANDROID_SECURE_STORAGE_CMD
+  if secure_storage_cmd := os.getenv('ANDROID_SECURE_STORAGE_CMD', None):
+    os.environ['TMP__KEY_FILE_NAME'] = str(key_path)
+    p = subprocess.Popen(secure_storage_cmd, shell=True, stdout=subprocess.PIPE)
+    pout, _ = p.communicate()
+    if p.returncode == 0:
+      key_password = pout.decode('utf-8')
+    else:
+      print('Failed to get password for key', key_path)
+
   # Attempt 1: Check if it's an RSA key (private key format)
   args = [AVB_OPENSSL, 'rsa', '-in', key_path, '-noout']
+  if key_password:
+    args += ['--passin', 'pass:' + key_password]
   p1 = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
   p1.communicate()
   if p1.wait() == 0:
-      return RSAPublicKey.load(key_path)
+      return RSAPublicKey.load(key_path, key_password)
 
   # Attempt 2: Check if it's an RSA key (public key format)
   args.append('-pubin')
   p2 = subprocess.Popen(args, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
   p2.communicate()
   if p2.wait() == 0:
-      return RSAPublicKey.load(key_path)
+      return RSAPublicKey.load(key_path, key_password)
 
   # If both RSA attempts fail, assume it's ML-DSA
   return MLDSAPublicKey.load(key_path)
